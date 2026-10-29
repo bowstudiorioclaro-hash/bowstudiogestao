@@ -403,6 +403,39 @@ button { cursor: pointer; }
   object-fit: contain;
 }
 
+/* Caixa de Importação Inteligente em Lote no Quadro do Cliente */
+.bulk-schedule-box {
+  background: #fafaf8;
+  border: 1.5px dashed #cfcfc8;
+  border-radius: 18px;
+  padding: 18px 20px;
+  margin-bottom: 18px;
+  transition: .2s;
+}
+.bulk-schedule-box:focus-within {
+  background: #ffffff;
+  border-color: var(--brand);
+  box-shadow: 0 8px 26px rgba(22, 22, 20, 0.06);
+}
+.bulk-schedule-textarea {
+  width: 100%;
+  min-height: 118px;
+  border: 1px solid #deded8;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-family: var(--font-family);
+  font-size: 13px;
+  line-height: 1.55;
+  background: #ffffff;
+  color: var(--ink);
+  outline: none;
+  resize: vertical;
+  margin: 10px 0 12px;
+}
+.bulk-schedule-textarea:focus {
+  border-color: var(--brand);
+}
+
 .btn {
   border: 0;
   border-radius: 12px;
@@ -1290,7 +1323,6 @@ td:first-child, th:first-child { padding-left: 0; }
   overflow: auto;
   max-height: 74vh;
 }
-/* Folha A4 Oficial */
 .a4-invoice-sheet {
   width: 740px;
   min-height: 1040px;
@@ -1724,8 +1756,8 @@ td:first-child, th:first-child { padding-left: 0; }
 
   <div class="sidebar-bottom">
     <span class="tiny-pill"><span class="sync-dot" id="syncDot"></span> <span id="syncStatusText">Sincronizando...</span></span>
-    <p>Selecione qualquer cliente na barra superior para abrir o quadro individual dele.</p>
-    <div style="font-size:11px;color:#d6d3e0;letter-spacing:.5px">BOW STUDIO <span style="float:right;color:#777">v7.5</span></div>
+    <p>Cole cronogramas inteiros no quadro de cada cliente para agendar tudo de uma vez.</p>
+    <div style="font-size:11px;color:#d6d3e0;letter-spacing:.5px">BOW STUDIO <span style="float:right;color:#777">v7.8</span></div>
   </div>
 </aside>
 
@@ -1842,7 +1874,7 @@ td:first-child, th:first-child { padding-left: 0; }
 <section class="section-view" id="view-clients">
   <section class="panel">
     <div class="panel-head">
-      <div><h2>Seus Clientes, Logos & Contratos PDF</h2><div class="sub">Clique em qualquer cliente na barra superior ou em <b>Abrir Quadro</b> para controlar demandas, recebimentos e tráfego pago dele.</div></div>
+      <div><h2>Seus Clientes, Logos & Contratos PDF</h2><div class="sub">Clique em qualquer cliente na barra superior ou em <b>Abrir Quadro</b> para controlar demandas, calendário, recebimentos e tráfego pago dele.</div></div>
       <button class="btn btn-primary btn-small" onclick="openModal('client')">＋ Adicionar Cliente</button>
     </div>
     <div class="table-wrap">
@@ -1913,7 +1945,7 @@ td:first-child, th:first-child { padding-left: 0; }
   <section class="panel">
     <div class="calendar-head">
       <div>
-        <h2>Calendário Interativo</h2>
+        <h2>Calendário Interativo Geral</h2>
         <div class="sub">Passe o mouse sobre qualquer dia para clicar em <b>+ Demanda</b>, clique na demanda para abrir ou arraste para remarcar.</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
@@ -2488,7 +2520,6 @@ const prettyDate = s => s ? new Date(s+'T12:00:00').toLocaleDateString('pt-BR') 
 const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const normStr = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 
-// Ordena qualquer lista financeira do MAIS RECENTE para o MAIS ANTIGO
 function sortNewestFirst(list, dateKey = 'due'){
   return (list || []).slice().sort((a, b) => {
     const dA = String(a[dateKey] || a.date || '');
@@ -2539,7 +2570,8 @@ let settings = {
 
 let isSaving = false;
 let currentView='dashboard', calendarDate=new Date(today.getFullYear(),today.getMonth(),1), currentType='client';
-let activeHubClientId = null; // ID do cliente aberto na barra superior
+let clientHubCalendarDate = new Date(today.getFullYear(), today.getMonth(), 1);
+let activeHubClientId = null;
 let currentDemandFilter='all', dashboardDemandScope='week';
 let isClientFilterMode = false;
 let selectedDemandClient = 'all';
@@ -2680,7 +2712,9 @@ async function saveData(){
 }
 
 async function pullFromCloud(){
+  const bulkInputFocused = document.activeElement && document.activeElement.id === 'bulkScheduleTextarea';
   if(isSaving ||
+     bulkInputFocused ||
      document.getElementById('modalBackdrop').classList.contains('open') ||
      document.getElementById('settingsBackdrop').classList.contains('open') ||
      document.getElementById('contractViewBackdrop').classList.contains('open') ||
@@ -2790,6 +2824,160 @@ function renderContractButtonHtml(c){
 }
 
 // ============================================================================
+// IMPORTADOR INTELIGENTE DE CRONOGRAMA EM LOTE + CALENDÁRIO DO CLIENTE
+// ============================================================================
+async function processClientBulkSchedule(clientId){
+  const c = (db.clients || []).find(x => Number(x.id) === Number(clientId));
+  if(!c) return;
+  const textarea = document.getElementById('bulkScheduleTextarea');
+  if(!textarea) return;
+
+  const rawText = textarea.value.trim();
+  if(!rawText){
+    alert('Cole o cronograma de demandas na caixa de texto antes de processar.');
+    return;
+  }
+
+  const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  let addedCount = 0;
+  let firstParsedDate = null;
+
+  db.services = db.services || [];
+  if(!db.nextIds) db.nextIds = {client:60,income:60,expense:60,service:60,partner:60,cash:60};
+
+  const baseYear = clientHubCalendarDate ? clientHubCalendarDate.getFullYear() : today.getFullYear();
+
+  lines.forEach(line => {
+    // Reconhece linhas iniciando com DD/MM ou DD/MM/AAAA ou DD-MM (ex: "28/10 - Stories (Novo Mascote) ás 12h")
+    const match = line.match(/^(\d{1,2})\s*[\/\-]\s*(\d{1,2})(?:\s*[\/\-]\s*(\d{2,4}))?\s*(?:[-–—:•]\s*|\s+)(.+)$/);
+    if(!match) return;
+
+    const day = parseInt(match[1], 10);
+    const month = parseInt(match[2], 10);
+    let year = match[3] ? parseInt(match[3], 10) : baseYear;
+    if(year < 100) year += 2000;
+
+    if(month < 1 || month > 12 || day < 1 || day > 31) return;
+
+    const restText = match[4].trim();
+    if(!restText) return;
+
+    // Detecta horário na frase (ex: "ás 12h", "às 18:30", "as 09h15", "14h")
+    let extractedTime = '';
+    const timeMatch = restText.match(/(?:[aàá]s\s*)?(\d{1,2})\s*(?:h|:)\s*(\d{2})?/i);
+    if(timeMatch){
+      const hh = parseInt(timeMatch[1], 10);
+      const mm = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+      if(hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59){
+        extractedTime = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+      }
+    }
+
+    const dateIso = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    if(!firstParsedDate) firstParsedDate = new Date(year, month - 1, 1);
+
+    const newId = (db.nextIds.service || 60) + 1;
+    db.nextIds.service = newId;
+
+    db.services.push({
+      id: newId,
+      title: restText,
+      client: c.name,
+      date: dateIso,
+      time: extractedTime,
+      status: 'Agendado',
+      notes: `Importado via Cronograma Rápido: ${line}`
+    });
+    addedCount++;
+  });
+
+  if(addedCount === 0){
+    alert('Nenhuma linha com data no formato DD/MM foi encontrada. Exemplo válido:\n28/10 - Stories (Novo Mascote)');
+    return;
+  }
+
+  // Posiciona o calendário do cliente no mês da primeira demanda importada
+  if(firstParsedDate){
+    clientHubCalendarDate = firstParsedDate;
+  }
+
+  textarea.value = '';
+  render();
+  await saveData();
+  showToast(`${addedCount} demanda(s) agendada(s) automaticamente para ${c.name}!`);
+}
+
+function changeClientHubMonth(delta){
+  clientHubCalendarDate = new Date(clientHubCalendarDate.getFullYear(), clientHubCalendarDate.getMonth() + delta, 1);
+  renderClientHubView();
+}
+
+function buildCalendarGridHtml(targetDateObj, servicesList, presetClientName = null){
+  const y = targetDateObj.getFullYear(), m = targetDateObj.getMonth();
+  const first = new Date(y, m, 1), start = (first.getDay()+6)%7;
+  const days = new Date(y, m+1, 0).getDate(), prevDays = new Date(y, m, 0).getDate();
+  const names = ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'];
+  
+  let out = names.map(n=>`<div class="day-name">${n}</div>`).join('');
+
+  for(let i=0; i<42; i++){
+    let dayNum = i - start + 1, actualMonth = m, actualYear = y, muted = false;
+    if(dayNum < 1){ dayNum = prevDays + dayNum; actualMonth = m - 1; muted = true; }
+    else if(dayNum > days){ dayNum -= days; actualMonth = m + 1; muted = true; }
+    
+    let ds = iso(new Date(actualYear, actualMonth, dayNum));
+    let ev = (servicesList || []).filter(s => s.date === ds);
+    let isToday = ds === iso(today);
+
+    const addCall = presetClientName
+      ? `openModal('service', null, null, '${ds}', {client: '${esc(presetClientName).replace(/'/g, "\\'")}'})`
+      : `openModal('service', null, null, '${ds}')`;
+
+    out += `
+      <div class="day ${muted?'muted':''} ${isToday?'today':''}" 
+           data-date="${ds}" 
+           ondragover="handleDragOver(event)" 
+           ondragleave="handleDragLeave(event)" 
+           ondrop="handleDrop(event, '${ds}')">
+        <div class="day-top-bar">
+          <span class="day-num-badge">
+            <span>${dayNum}</span>
+            ${ev.length ? `<span style="color:var(--muted);font-size:9px">(${ev.length})</span>` : ''}
+          </span>
+          <button type="button" class="day-add-btn" onclick="event.stopPropagation(); ${addCall}" title="Adicionar demanda em ${prettyDate(ds)}">
+            <span>＋</span><span class="lbl-dem">Demanda</span>
+          </button>
+        </div>
+        ${ev.map(e => {
+          const dead = getDeadlineStatus(e.date, e.status);
+          const mediaSrc = e.mediaData || e.mediaUrl || '';
+          const isVid = isVideoMedia(mediaSrc, e.mediaType);
+          const mediaThumbHtml = mediaSrc
+            ? `<div class="event-media-preview">
+                 ${isVid ? `<video src="${esc(mediaSrc)}" muted preload="metadata"></video><div class="play-badge">&#x25B6;&#xFE0E;</div>` : `<img src="${esc(mediaSrc)}" alt="Anexo">`}
+               </div>`
+            : '';
+
+          return `
+            <div class="event-chip ${dead.css}" 
+                 draggable="true" 
+                 ondragstart="handleDragStart(event, ${e.id})" 
+                 onclick="event.stopPropagation(); openDemandDetails(${e.id})"
+                 title="${esc(e.title)}${e.time ? ' ('+esc(e.time)+')' : ''} — Clique para abrir/editar ou arraste para mudar a data">
+              <div class="event-chip-top">
+                <span class="event-chip-title">${e.time ? `<b>${esc(e.time)}</b> ` : ''}${esc(e.title)}</span>
+              </div>
+              ${mediaThumbHtml}
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+  return out;
+}
+
+// ============================================================================
 // BARRA SUPERIOR DE CLIENTES & QUADRO INDIVIDUAL DO CLIENTE (HUB DO CLIENTE)
 // ============================================================================
 function renderTopClientSwitcherBar(){
@@ -2853,9 +3041,12 @@ function renderClientHubView(){
     return;
   }
 
+  // Preserva texto que o usuário possa estar digitando na caixa em lote
+  const existingBulkText = document.getElementById('bulkScheduleTextarea')?.value || '';
+
   const cNameNorm = normStr(c.name);
 
-  // Filtra Demandas, Contas a Receber e Despesas (Tráfego Pago / Custos) deste cliente
+  // Filtra Demandas, Contas a Receber e Despesas deste cliente
   const clientDemands = (db.services || []).filter(s => normStr(s.client) === cNameNorm).sort((a,b) => (a.date||'').localeCompare(b.date||''));
   const clientIncomes = sortNewestFirst((db.incomes || []).filter(i => normStr(i.client) === cNameNorm), 'due');
   const clientExpenses = sortNewestFirst((db.expenses || []).filter(e => normStr(e.clientName) === cNameNorm), 'due');
@@ -2869,6 +3060,9 @@ function renderClientHubView(){
   const bigLogoHtml = c.logoData
     ? `<div class="client-hub-big-logo"><img src="${esc(c.logoData)}" alt="${esc(c.name)}"></div>`
     : `<div class="client-hub-big-logo">${esc(initials(c.name))}</div>`;
+
+  const clientMonthLabel = clientHubCalendarDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const clientCalendarHtml = buildCalendarGridHtml(clientHubCalendarDate, clientDemands, c.name);
 
   container.innerHTML = `
     <div class="client-hub-banner">
@@ -2918,12 +3112,50 @@ function renderClientHubView(){
       </article>
     </div>
 
-    <!-- Bloco 1: Demandas do Cliente -->
+    <!-- Bloco 1: Importador Inteligente de Cronograma em Lote -->
+    <section class="bulk-schedule-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div>
+          <h3 style="margin:0;font-size:16px">&#x2726;&#xFE0E; Importador Inteligente de Cronograma & Posts (${esc(c.name)})</h3>
+          <div class="sub">Cole sua lista de datas e entregas abaixo (uma por linha). O sistema entende o dia, mês e horário e já agenda no calendário e na lista!</div>
+        </div>
+        <span class="tiny-pill" style="background:var(--brand);color:#fff">Automático</span>
+      </div>
+      <textarea id="bulkScheduleTextarea" class="bulk-schedule-textarea" placeholder="Exemplo — cole seu cronograma aqui:&#10;28/10 - Stories (Novo Mascote Silhueta) ás 12h e ás 18h 26 Sabores&#10;29/10 - Feed (Promoção 26 Sabores)&#10;30/10 - Stories (Vote no nome que combina)&#10;01/11 - Stories (Revelação Flashito)">${esc(existingBulkText)}</textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <span class="sub">Formato reconhecido: <b>DD/MM - Descrição da postagem ou demanda (opcional: às 12h)</b></span>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn btn-light btn-small" onclick="document.getElementById('bulkScheduleTextarea').value=''">Limpar Texto</button>
+          <button type="button" class="btn btn-primary btn-small" onclick="processClientBulkSchedule(${c.id})">&#x2733;&#xFE0E; Processar e Agendar Automaticamente</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bloco 2: Calendário Exclusivo do Cliente -->
+    <section class="panel" style="margin-bottom:18px">
+      <div class="calendar-head">
+        <div>
+          <h2>Calendário de ${esc(c.name)}</h2>
+          <div class="sub">Visualize os posts e demandas de ${esc(c.name)} no mês, clique para abrir/anexar mídia ou arraste entre os dias.</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button type="button" class="btn btn-light btn-small" onclick="changeClientHubMonth(-1)">←</button>
+          <strong style="text-transform:capitalize;font-size:15px">${esc(clientMonthLabel)}</strong>
+          <button type="button" class="btn btn-light btn-small" onclick="changeClientHubMonth(1)">→</button>
+          <button type="button" class="btn btn-primary btn-small" onclick="openModal('service', null, null, null, {client: '${esc(c.name).replace(/'/g, "\\'")}'})">＋ Demanda Individual</button>
+        </div>
+      </div>
+      <div class="calendar-scroll-wrap">
+        <div class="calendar-grid">${clientCalendarHtml}</div>
+      </div>
+    </section>
+
+    <!-- Bloco 3: Listagem de Demandas do Cliente -->
     <section class="panel" style="margin-bottom:18px">
       <div class="panel-head">
         <div>
-          <h2>Demandas & Entregas de ${esc(c.name)}</h2>
-          <div class="sub">Clique na demanda para abrir anexos (vídeo/imagem) ou editar</div>
+          <h2>Listagem de Demandas & Cronograma de ${esc(c.name)} (${clientDemands.length})</h2>
+          <div class="sub">Todas as demandas coladas ou criadas aparecem listadas abaixo na data correta</div>
         </div>
         <button class="btn btn-primary btn-small" onclick="openModal('service', null, null, null, {client: '${esc(c.name).replace(/'/g, "\\'")}'})">＋ Nova Demanda p/ ${esc(c.name)}</button>
       </div>
@@ -2932,8 +3164,8 @@ function renderClientHubView(){
           <thead>
             <tr>
               <th>Prazo / Alerta</th>
-              <th>Demanda / Mídia</th>
-              <th>Vencimento</th>
+              <th>Demanda / Postagem</th>
+              <th>Data</th>
               <th>Horário</th>
               <th>Status</th>
               <th>Ações</th>
@@ -2951,7 +3183,7 @@ function renderClientHubView(){
                 <tr class="demand-row" onclick="openDemandDetails(${s.id})">
                   <td><span class="alert-tag ${dead.css}">${dead.label}</span></td>
                   <td>${previewIcon}<b>${esc(s.title)}</b></td>
-                  <td>${prettyDate(s.date)}</td>
+                  <td><b>${prettyDate(s.date)}</b></td>
                   <td>${esc(s.time || '—')}</td>
                   <td>${badge(s.status || 'Agendado')}</td>
                   <td onclick="event.stopPropagation()">
@@ -2961,14 +3193,14 @@ function renderClientHubView(){
                   </td>
                 </tr>
               `;
-            }).join('') || `<tr><td colspan="6" class="empty">Nenhuma demanda cadastrada para ${esc(c.name)}.</td></tr>`}
+            }).join('') || `<tr><td colspan="6" class="empty">Nenhuma demanda cadastrada para ${esc(c.name)}. Cole seu cronograma acima para criar todas de uma vez!</td></tr>`}
           </tbody>
         </table>
       </div>
     </section>
 
     <div class="lower-grid" style="margin-top:0">
-      <!-- Bloco 2: Valores a Receber do Cliente -->
+      <!-- Bloco 4: Valores a Receber do Cliente -->
       <section class="panel">
         <div class="panel-head">
           <div>
@@ -3010,7 +3242,7 @@ function renderClientHubView(){
         </div>
       </section>
 
-      <!-- Bloco 3: Despesas de Tráfego Pago & Custos do Cliente -->
+      <!-- Bloco 5: Despesas de Tráfego Pago & Custos do Cliente -->
       <section class="panel">
         <div class="panel-head">
           <div>
@@ -3627,7 +3859,6 @@ function renderPartnersDashboard(partners, expenses){
     `;
   }).join('') || `<div class="panel" style="grid-column:1/-1"><div class="empty">Nenhum sócio cadastrado. Clique em <b>"+ Cadastrar Sócio"</b> para adicionar foto, competências, telefone, e-mail e CNPJ.</div></div>`;
 
-  // Histórico de pró-labore ordenado do mais recente para o mais antigo
   let proLaboreExpenses = sortNewestFirst(expenses.filter(e => e.category === 'Pagamento Pró-labore'), 'due');
   const subtitleEl = document.getElementById('partnerHistorySubtitle');
   const btnShowAll = document.getElementById('btnShowAllPartnersHistory');
@@ -3829,7 +4060,6 @@ function filterDemands(filter, btn){
   renderDemandsTable();
 }
 
-// Extrato do Caixa ordenado do mais recente para o mais antigo (com desempate pelo ID mais recente)
 function renderCashStatements(incomes, expenses, partners, cashEntries){
   const moves = [
     ...incomes.filter(x=>x.status==='Recebido').map(x=>({
@@ -3883,65 +4113,8 @@ function renderCashStatements(incomes, expenses, partners, cashEntries){
 }
 
 function renderCalendar(){
-  const y = calendarDate.getFullYear(), m = calendarDate.getMonth();
   document.getElementById('monthLabel').textContent = calendarDate.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
-  const first = new Date(y, m, 1), start = (first.getDay()+6)%7;
-  const days = new Date(y, m+1, 0).getDate(), prevDays = new Date(y, m, 0).getDate();
-  const names = ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'];
-  
-  let out = names.map(n=>`<div class="day-name">${n}</div>`).join('');
-
-  for(let i=0; i<42; i++){
-    let dayNum = i - start + 1, actualMonth = m, actualYear = y, muted = false;
-    if(dayNum < 1){ dayNum = prevDays + dayNum; actualMonth = m - 1; muted = true; }
-    else if(dayNum > days){ dayNum -= days; actualMonth = m + 1; muted = true; }
-    
-    let ds = iso(new Date(actualYear, actualMonth, dayNum));
-    let ev = (db.services||[]).filter(s => s.date === ds);
-    let isToday = ds === iso(today);
-
-    out += `
-      <div class="day ${muted?'muted':''} ${isToday?'today':''}" 
-           data-date="${ds}" 
-           ondragover="handleDragOver(event)" 
-           ondragleave="handleDragLeave(event)" 
-           ondrop="handleDrop(event, '${ds}')">
-        <div class="day-top-bar">
-          <span class="day-num-badge">
-            <span>${dayNum}</span>
-            ${ev.length ? `<span style="color:var(--muted);font-size:9px">(${ev.length})</span>` : ''}
-          </span>
-          <button type="button" class="day-add-btn" onclick="event.stopPropagation(); openModal('service', null, null, '${ds}')" title="Adicionar demanda em ${prettyDate(ds)}">
-            <span>＋</span><span class="lbl-dem">Demanda</span>
-          </button>
-        </div>
-        ${ev.map(e => {
-          const dead = getDeadlineStatus(e.date, e.status);
-          const mediaSrc = e.mediaData || e.mediaUrl || '';
-          const isVid = isVideoMedia(mediaSrc, e.mediaType);
-          const mediaThumbHtml = mediaSrc
-            ? `<div class="event-media-preview">
-                 ${isVid ? `<video src="${esc(mediaSrc)}" muted preload="metadata"></video><div class="play-badge">&#x25B6;&#xFE0E;</div>` : `<img src="${esc(mediaSrc)}" alt="Anexo">`}
-               </div>`
-            : '';
-
-          return `
-            <div class="event-chip ${dead.css}" 
-                 draggable="true" 
-                 ondragstart="handleDragStart(event, ${e.id})" 
-                 onclick="event.stopPropagation(); openDemandDetails(${e.id})"
-                 title="Clique para abrir/editar ou arraste para mudar a data">
-              <div class="event-chip-top">
-                <span class="event-chip-title">${esc(e.title)}</span>
-              </div>
-              ${mediaThumbHtml}
-            </div>
-          `;
-        }).join('')}
-      </div>
-    `;
-  }
-  document.getElementById('calendarGrid').innerHTML = out;
+  document.getElementById('calendarGrid').innerHTML = buildCalendarGridHtml(calendarDate, db.services || [], null);
 }
 
 function openDemandDetails(id){
