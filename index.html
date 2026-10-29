@@ -5282,5 +5282,202 @@ async function downloadClientScheduleA4Pdf(){
 // Dispara a atualização imediata para sincronizar Mobile e Desktop
 pullFromCloud();
 </script>
+  <!-- ====================================================================== -->
+<!-- ATUALIZAÇÃO BOW STUDIO v8.5: SINCRONIZAÇÃO INSTANTÂNEA (TURBO 4G/5G)   -->
+<!-- ====================================================================== -->
+<script>
+(function() {
+  // 1. Para o intervalo antigo de 5 segundos que baixava o banco inteiro repetidamente
+  for (let i = 1; i < 9999; i++) window.clearInterval(i);
+
+  let lastKnownCloudUpdate = Number(db.updatedAt || 0);
+  let isFetchingCloud = false;
+  let realtimeSource = null;
+
+  // 2. Cache no IndexedDB do celular (Suporta +500MB sem travar como o localStorage)
+  const idbCache = {
+    dbInstance: null,
+    init() {
+      return new Promise((resolve) => {
+        if (this.dbInstance) return resolve(this.dbInstance);
+        const req = indexedDB.open('BowStudioFastCache', 1);
+        req.onupgradeneeded = e => e.target.result.createObjectStore('store');
+        req.onsuccess = e => { this.dbInstance = e.target.result; resolve(this.dbInstance); };
+        req.onerror = () => resolve(null);
+      });
+    },
+    async save(data) {
+      const idb = await this.init();
+      if (!idb) return;
+      try {
+        const tx = idb.transaction('store', 'readwrite');
+        tx.objectStore('store').put(data, 'bow_db');
+      } catch (e) {}
+    },
+    async load() {
+      const idb = await this.init();
+      if (!idb) return null;
+      return new Promise((resolve) => {
+        try {
+          const tx = idb.transaction('store', 'readonly');
+          const req = tx.objectStore('store').get('bow_db');
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        } catch (e) { resolve(null); }
+      });
+    }
+  };
+
+  // Carrega o cache instantâneo do aparelho em 0.05s enquanto valida a rede
+  idbCache.load().then(cached => {
+    if (cached && cached.updatedAt && cached.updatedAt >= lastKnownCloudUpdate) {
+      db = { ...db, ...cached };
+      lastKnownCloudUpdate = Number(db.updatedAt);
+      render();
+      if (typeof injectSchedulePdfButton === 'function') injectSchedulePdfButton();
+    }
+  });
+
+  // 3. Salvamento Instantâneo (Usa PATCH e atualiza o carimbo de tempo de 15 bytes)
+  window.saveData = async function(changedCollectionKey = null) {
+    isSaving = true;
+    const nowTs = Date.now();
+    db.initialized = true;
+    db.updatedAt = nowTs;
+    lastKnownCloudUpdate = nowTs;
+
+    // Salva imediatamente no cache rápido do aparelho (não bloqueia a tela)
+    idbCache.save(db);
+    if (typeof safeLocalSave === 'function') safeLocalSave(STORAGE_KEY, db);
+
+    const cleanUrl = (settings.cloudUrl || DEFAULT_CLOUD_URL).replace(/\/$/, '');
+    const statusText = document.getElementById('syncStatusText');
+    const syncDot = document.getElementById('syncDot');
+
+    if (statusText) statusText.textContent = 'Enviando... ⚡';
+
+    try {
+      // Se sabemos qual parte mudou, enviamos só ela + updatedAt via PATCH (muito mais rápido no 4G)
+      const payload = changedCollectionKey && db[changedCollectionKey] !== undefined
+        ? { [changedCollectionKey]: db[changedCollectionKey], nextIds: db.nextIds, updatedAt: nowTs }
+        : db;
+
+      const res = await fetch(`${cleanUrl}/bow_studio_v7.json`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        if (statusText) statusText.textContent = 'Instantâneo ✓';
+        if (syncDot) syncDot.style.background = '#22c55e';
+        document.getElementById('firebaseAlert')?.classList.remove('show');
+      } else {
+        if (statusText) statusText.textContent = 'Bloqueado (Regras)';
+        if (syncDot) syncDot.style.background = '#ef4444';
+      }
+    } catch (err) {
+      if (statusText) statusText.textContent = 'Offline (Salvo no aparelho)';
+      if (syncDot) syncDot.style.background = '#f59e0b';
+    } finally {
+      isSaving = false;
+    }
+  };
+
+  // 4. Download Inteligente: Só baixa os dados se o updatedAt (15 bytes) da nuvem for mais novo!
+  window.pullFromCloud = async function(forceFull = false) {
+    const bulkInputFocused = document.activeElement && document.activeElement.id === 'bulkScheduleTextarea';
+    if (isSaving || isFetchingCloud || bulkInputFocused ||
+        document.getElementById('modalBackdrop')?.classList.contains('open') ||
+        document.getElementById('settingsBackdrop')?.classList.contains('open') ||
+        document.getElementById('contractViewBackdrop')?.classList.contains('open') ||
+        document.getElementById('invoiceModalBackdrop')?.classList.contains('open') ||
+        document.getElementById('schedulePdfBackdrop')?.classList.contains('open')) return;
+
+    const cleanUrl = (settings.cloudUrl || DEFAULT_CLOUD_URL).replace(/\/$/, '');
+    isFetchingCloud = true;
+
+    try {
+      if (!forceFull && lastKnownCloudUpdate > 0) {
+        // Faz um ping ultraleve de 15 bytes apenas no número updatedAt
+        const pingRes = await fetch(`${cleanUrl}/bow_studio_v7/updatedAt.json?t=${Date.now()}`, { cache: 'no-store' });
+        if (pingRes.ok) {
+          const remoteTs = Number(await pingRes.json() || 0);
+          // Se o timestamp da nuvem é igual ao que já está na sua tela, NÃO gasta dados móveis!
+          if (remoteTs > 0 && remoteTs <= lastKnownCloudUpdate) {
+            document.getElementById('syncStatusText').textContent = 'Em tempo real ⚡';
+            document.getElementById('syncDot').style.background = '#22c55e';
+            isFetchingCloud = false;
+            return;
+          }
+        }
+      }
+
+      // Só chega aqui quando realmente houve uma mudança nova feita por outro sócio ou na primeira abertura
+      const res = await fetch(`${cleanUrl}/bow_studio_v7.json`, { cache: 'no-store' });
+      if (!res.ok) { isFetchingCloud = false; return; }
+      const remoteData = await res.json();
+
+      if (remoteData && typeof remoteData === 'object') {
+        db = {
+          initialized: true,
+          updatedAt: Number(remoteData.updatedAt || Date.now()),
+          clients: Array.isArray(remoteData.clients) ? remoteData.clients : Object.values(remoteData.clients || {}),
+          incomes: Array.isArray(remoteData.incomes) ? remoteData.incomes : Object.values(remoteData.incomes || {}),
+          expenses: Array.isArray(remoteData.expenses) ? remoteData.expenses : Object.values(remoteData.expenses || {}),
+          services: Array.isArray(remoteData.services) ? remoteData.services : Object.values(remoteData.services || {}),
+          partners: Array.isArray(remoteData.partners) ? remoteData.partners : Object.values(remoteData.partners || {}),
+          cashEntries: Array.isArray(remoteData.cashEntries) ? remoteData.cashEntries : Object.values(remoteData.cashEntries || {}),
+          serviceTags: Array.isArray(remoteData.serviceTags) ? remoteData.serviceTags : Object.values(remoteData.serviceTags || {}),
+          brandSettings: remoteData.brandSettings || db.brandSettings || null,
+          invoiceDefaults: remoteData.invoiceDefaults || db.invoiceDefaults || { pixKey: 'contato@bowstudio.com.br', receiver: 'BOW STUDIO — Gestão Criativa' },
+          nextIds: { client:60, income:60, expense:60, service:60, partner:60, cash:60, ...(remoteData.nextIds || {}) }
+        };
+
+        lastKnownCloudUpdate = db.updatedAt;
+        settings.bgColor = '#e6ecf2';
+        applyBranding();
+        ensureTagsExtracted();
+        ensureAllPartnersFromExpenses();
+
+        render();
+        if (typeof injectSchedulePdfButton === 'function') injectSchedulePdfButton();
+        idbCache.save(db);
+        if (typeof safeLocalSave === 'function') safeLocalSave(STORAGE_KEY, db);
+
+        document.getElementById('syncStatusText').textContent = 'Em tempo real ⚡';
+        document.getElementById('syncDot').style.background = '#22c55e';
+      }
+    } catch (e) {
+      document.getElementById('syncStatusText').textContent = 'Cache Rápido Ativo';
+    } finally {
+      isFetchingCloud = false;
+    }
+  };
+
+  // 5. Conexão Instantânea via Stream (Server-Sent Events do Firebase)
+  function connectRealtimeStream() {
+    if (realtimeSource) realtimeSource.close();
+    const cleanUrl = (settings.cloudUrl || DEFAULT_CLOUD_URL).replace(/\/$/, '');
+    try {
+      realtimeSource = new EventSource(`${cleanUrl}/bow_studio_v7/updatedAt.json`);
+      realtimeSource.addEventListener('put', e => {
+        try {
+          const packet = JSON.parse(e.data);
+          const remoteTs = Number(packet.data || 0);
+          if (remoteTs > lastKnownCloudUpdate && !isSaving) {
+            window.pullFromCloud(true);
+          }
+        } catch (err) {}
+      });
+    } catch (e) {}
+  }
+
+  // Inicializa o Stream em Tempo Real + Ping leve de segurança (15 bytes a cada 2.5s)
+  connectRealtimeStream();
+  window.pullFromCloud(true);
+  setInterval(() => window.pullFromCloud(false), 2500);
+})();
+</script>
 </body>
 </html>
