@@ -1,6 +1,38 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-<head>
+<head <!-- CONFIGURAÇÃO DE APLICATIVO INSTALÁVEL (ANDROID & iOS) -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BOW Studio">
+<meta name="theme-color" content="#141413">
+
+<!-- Ícone do App na tela inicial do iPhone e Android -->
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 240'%3E%3Crect width='240' height='240' rx='54' fill='%23141413'/%3E%3Cg transform='translate(0, 55)'%3E%3Cpath d='M22 12 H44 V46 C54 38 68 35 86 35 H96 L87 57 H68 C51 57 42 66 42 79 C42 92 51 101 69 101 L61 121 C36 120 22 103 22 78 Z' fill='%23ffffff'/%3E%3Cpolygon points='87,57 121,57 104,101 69,101' fill='%23ffffff'/%3E%3Cpath d='M129 36 C152 38 168 49 175 66 L180 42 H200 L214 93 L228 12 H248 L223 121 H203 L188 73 L175 121 H156 L163 95 C156 111 140 121 116 121 H96 L104 101 H120 C138 101 149 92 149 79 C149 66 138 57 121 57 Z' fill='%23ffffff'/%3E%3C/g%3E%3C/svg%3E">
+
+<script>
+// Gera o Manifesto PWA dinamicamente e ativa o botão de instalar no App
+(function() {
+  const iconSvg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 240'%3E%3Crect width='240' height='240' rx='54' fill='%23141413'/%3E%3Cg transform='translate(0, 55)'%3E%3Cpath d='M22 12 H44 V46 C54 38 68 35 86 35 H96 L87 57 H68 C51 57 42 66 42 79 C42 92 51 101 69 101 L61 121 C36 120 22 103 22 78 Z' fill='%23ffffff'/%3E%3Cpolygon points='87,57 121,57 104,101 69,101' fill='%23ffffff'/%3E%3Cpath d='M129 36 C152 38 168 49 175 66 L180 42 H200 L214 93 L228 12 H248 L223 121 H203 L188 73 L175 121 H156 L163 95 C156 111 140 121 116 121 H96 L104 101 H120 C138 101 149 92 149 79 C149 66 138 57 121 57 Z' fill='%23ffffff'/%3E%3C/g%3E%3C/svg%3E";
+  const manifest = {
+    name: "BOW STUDIO — Gestão Criativa",
+    short_name: "BOW Studio",
+    start_url: window.location.href,
+    display: "standalone",
+    background_color: "#141413",
+    theme_color: "#141413",
+    orientation: "portrait-primary",
+    icons: [
+      { src: iconSvg, sizes: "192x192", type: "image/svg+xml", purpose: "any maskable" },
+      { src: iconSvg, sizes: "512x512", type: "image/svg+xml", purpose: "any maskable" }
+    ]
+  };
+  const link = document.createElement('link');
+  link.rel = 'manifest';
+  link.href = 'data:application/manifest+json;charset=utf-8,' + encodeURIComponent(JSON.stringify(manifest));
+  document.head.appendChild(link);
+})();
+</script>>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>BOW STUDIO — Gestão Criativa</title>
