@@ -4915,6 +4915,340 @@ applyBranding();
 render();
 pullFromCloud();
 setInterval(pullFromCloud, 5000);
+</script> 
+  <!-- ====================================================================== -->
+<!-- ATUALIZAÇÃO BOW STUDIO v8.0: COR #e6ecf2 + FIX MOBILE + PDF CRONOGRAMA -->
+<!-- ====================================================================== -->
+<style>
+:root {
+  --bg: #e6ecf2 !important;
+  --panel: #f4f7fa !important;
+  --line: #d5dfe9 !important;
+}
+body {
+  background: #e6ecf2 !important;
+}
+.panel, .stat:not(.highlight-cash), .partner-card, .top-client-switcher, .search, .mobile-menu {
+  background: #f4f7fa !important;
+  border-color: #d5dfe9 !important;
+}
+.day, .service-card, .cash-mini-box, .partner-meta-list, .bulk-schedule-box, .tags-selector-box, .detail-grid, .client-subfilter-bar {
+  background: #e6ecf2 !important;
+  border-color: #cfdbe6 !important;
+}
+.day.today {
+  background: #ffffff !important;
+  border: 2px solid var(--brand) !important;
+}
+
+/* Correção Completa de Responsividade Mobile (Sem quebrar cards ou tabelas) */
+@media(max-width: 780px) {
+  .main {
+    padding: 12px 10px 44px !important;
+    width: 100% !important;
+    overflow-x: hidden !important;
+  }
+  .topbar {
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+  }
+  .topbar-left {
+    flex: 1 1 auto !important;
+  }
+  .page-title {
+    font-size: 19px !important;
+    line-height: 1.2 !important;
+  }
+  /* Corrige os 4 cards do Quadro do Cliente que ficavam espremidos no celular */
+  #view-client-hub .stats, .stats {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+  }
+  .stat {
+    padding: 12px !important;
+  }
+  .stat-value {
+    font-size: 17px !important;
+  }
+  .client-hub-banner {
+    padding: 16px !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+  }
+  .client-hub-banner > div:last-child {
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 6px !important;
+  }
+  .client-hub-banner > div:last-child button {
+    width: 100% !important;
+    font-size: 11px !important;
+    padding: 9px 8px !important;
+  }
+  .top-client-switcher {
+    padding: 8px 10px !important;
+    margin-bottom: 14px !important;
+    border-radius: 12px !important;
+  }
+  .top-client-label span:last-child {
+    display: none !important;
+  }
+  .panel-head {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+  .panel-head .btn {
+    width: 100% !important;
+  }
+  .calendar-head {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+  .calendar-head > div:last-child {
+    justify-content: space-between !important;
+    flex-wrap: wrap !important;
+  }
+  /* Ajusta a pré-visualização da Folha A4 no celular */
+  .invoice-preview-col {
+    padding: 8px !important;
+    justify-content: flex-start !important;
+  }
+  .a4-invoice-sheet {
+    transform-origin: top left;
+  }
+}
+</style>
+
+<!-- Modal do PDF de Cronograma de Conteúdo do Cliente (A4) -->
+<div class="modal-backdrop" id="schedulePdfBackdrop">
+  <div class="modal modal-invoice">
+    <div class="modal-head">
+      <div>
+        <h2 id="schedulePdfModalTitle">Cronograma de Conteúdo (A4 em PDF)</h2>
+        <div class="sub">Pronto para baixar em A4 e enviar para aprovação do cliente.</div>
+      </div>
+      <button type="button" class="close" onclick="closeSchedulePdfModal()">×</button>
+    </div>
+    <div class="invoice-preview-col" style="max-height:72vh">
+      <div class="a4-invoice-sheet" id="a4ScheduleSheet"></div>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-light btn-small" onclick="closeSchedulePdfModal()">Fechar (ESC)</button>
+      <button type="button" class="btn btn-primary" id="btnDownloadSchedulePdf" onclick="downloadClientScheduleA4Pdf()">&#x2199;&#xFE0E; Baixar Cronograma em PDF (A4)</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// 1. Força a nova cor de fundo #e6ecf2 em todos os dispositivos
+settings.bgColor = '#e6ecf2';
+document.documentElement.style.setProperty('--bg', '#e6ecf2');
+if(db && db.brandSettings) db.brandSettings.bgColor = '#e6ecf2';
+
+// 2. Corrige o carregamento de dados no Mobile (Ignora limite de memória do localStorage do celular e renderiza direto da nuvem)
+function safeLocalSave(key, dataObj){
+  try {
+    localStorage.setItem(key, JSON.stringify(dataObj));
+  } catch(quotaErr) {
+    // Se o celular bloquear por causa do peso das imagens/vídeos/PDFs, salva uma cópia leve no cache local sem travar a tela!
+    try {
+      const lightCopy = {
+        ...dataObj,
+        services: (dataObj.services || []).map(s => ({ ...s, mediaData: '' })),
+        clients: (dataObj.clients || []).map(c => ({ ...c, contractPdfData: '' }))
+      };
+      localStorage.setItem(key, JSON.stringify(lightCopy));
+    } catch(e){}
+  }
+}
+
+// Sobrescreve pullFromCloud para garantir 100% de paridade entre Mobile e Desktop
+pullFromCloud = async function(){
+  const bulkInputFocused = document.activeElement && document.activeElement.id === 'bulkScheduleTextarea';
+  if(isSaving ||
+     bulkInputFocused ||
+     document.getElementById('modalBackdrop')?.classList.contains('open') ||
+     document.getElementById('settingsBackdrop')?.classList.contains('open') ||
+     document.getElementById('contractViewBackdrop')?.classList.contains('open') ||
+     document.getElementById('invoiceModalBackdrop')?.classList.contains('open') ||
+     document.getElementById('schedulePdfBackdrop')?.classList.contains('open')) return;
+
+  const cleanUrl = (settings.cloudUrl || DEFAULT_CLOUD_URL).replace(/\/$/, '');
+  try {
+    const res = await fetch(`${cleanUrl}/bow_studio_v7.json?t=${Date.now()}`, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { 'Accept': 'application/json' }
+    });
+    if(!res.ok) return;
+    const remoteData = await res.json();
+
+    if(remoteData && typeof remoteData === 'object'){
+      db = {
+        initialized: true,
+        clients: Array.isArray(remoteData.clients) ? remoteData.clients : Object.values(remoteData.clients || {}),
+        incomes: Array.isArray(remoteData.incomes) ? remoteData.incomes : Object.values(remoteData.incomes || {}),
+        expenses: Array.isArray(remoteData.expenses) ? remoteData.expenses : Object.values(remoteData.expenses || {}),
+        services: Array.isArray(remoteData.services) ? remoteData.services : Object.values(remoteData.services || {}),
+        partners: Array.isArray(remoteData.partners) ? remoteData.partners : Object.values(remoteData.partners || {}),
+        cashEntries: Array.isArray(remoteData.cashEntries) ? remoteData.cashEntries : Object.values(remoteData.cashEntries || {}),
+        serviceTags: Array.isArray(remoteData.serviceTags) ? remoteData.serviceTags : Object.values(remoteData.serviceTags || {}),
+        brandSettings: remoteData.brandSettings || db.brandSettings || null,
+        invoiceDefaults: remoteData.invoiceDefaults || db.invoiceDefaults || { pixKey: 'contato@bowstudio.com.br', receiver: 'BOW STUDIO — Gestão Criativa' },
+        nextIds: {client:60,income:60,expense:60,service:60,partner:60,cash:60, ...(remoteData.nextIds || {})}
+      };
+
+      settings.bgColor = '#e6ecf2';
+      applyBranding();
+      ensureTagsExtracted();
+      ensureAllPartnersFromExpenses();
+
+      // Renderiza na tela ANTES de tentar gravar no localStorage do celular!
+      render();
+      injectSchedulePdfButton();
+      safeLocalSave(STORAGE_KEY, db);
+
+      document.getElementById('syncStatusText').textContent = 'Sincronizado ✓';
+      document.getElementById('syncDot').style.background = '#22c55e';
+      document.getElementById('firebaseAlert').classList.remove('show');
+    }
+  } catch(err) {
+    document.getElementById('syncStatusText').textContent = 'Modo Local';
+  }
+};
+
+// 3. Exportador do Cronograma / Calendário de Conteúdo do Cliente em PDF (A4)
+function injectSchedulePdfButton(){
+  if(currentView !== 'client-hub' || !activeHubClientId) return;
+  const banner = document.querySelector('.client-hub-banner > div:last-child');
+  if(banner && !document.getElementById('btnOpenSchedulePdf')){
+    const btn = document.createElement('button');
+    btn.id = 'btnOpenSchedulePdf';
+    btn.className = 'btn btn-light btn-small';
+    btn.style.cssText = 'background:#e6ecf2;color:#141413;font-weight:700';
+    btn.innerHTML = '&#x25A6;&#xFE0E; Baixar Cronograma PDF (A4)';
+    btn.onclick = () => openClientSchedulePdfModal(activeHubClientId);
+    banner.prepend(btn);
+  }
+}
+
+const origRenderClientHubView = renderClientHubView;
+renderClientHubView = function(){
+  origRenderClientHubView();
+  injectSchedulePdfButton();
+};
+
+function openClientSchedulePdfModal(clientId){
+  const c = (db.clients || []).find(x => Number(x.id) === Number(clientId));
+  if(!c) return;
+
+  const cNameNorm = normStr(c.name);
+  const clientDemands = (db.services || [])
+    .filter(s => normStr(s.client) === cNameNorm)
+    .sort((a,b) => (a.date||'').localeCompare(b.date||''));
+
+  const bowLogoSrc = settings.wordmarkData || cachedDarkWordmarkPng || ('data:image/svg+xml;utf8,' + encodeURIComponent(DEFAULT_WORDMARK_DARK_SVG));
+
+  const rowsHtml = clientDemands.map((d, idx) => `
+    <tr>
+      <td style="font-weight:700;width:18%">${prettyDate(d.date)}${d.time ? `<div style="font-size:11px;color:#787873;font-weight:500">${esc(d.time)}</div>` : ''}</td>
+      <td style="font-weight:600">${esc(d.title)}</td>
+      <td style="width:18%;text-align:right"><span style="padding:4px 9px;border-radius:12px;font-size:10px;background:#e6ecf2;color:#161614;font-weight:700">${esc(d.status || 'Agendado')}</span></td>
+    </tr>
+  `).join('') || `<tr><td colspan="3" style="text-align:center;padding:28px;color:#787873">Nenhuma demanda agendada para este cliente.</td></tr>`;
+
+  document.getElementById('a4ScheduleSheet').innerHTML = `
+    <div>
+      <div class="inv-header">
+        <div class="inv-logos-partnership">
+          <div class="inv-wordmark"><img src="${bowLogoSrc}" alt="BOW STUDIO"></div>
+          ${c.logoData ? `<div class="inv-partner-divider" style="display:inline-flex">×</div><div class="inv-client-logo-box" style="display:inline-flex"><img src="${esc(c.logoData)}" alt="${esc(c.name)}"></div>` : ''}
+        </div>
+        <div class="inv-doc-meta">
+          <div class="inv-badge">CRONOGRAMA DE CONTEÚDO</div>
+          <div class="inv-doc-number">${esc(c.name)}</div>
+          <div style="font-size:12px;color:#787873;margin-top:4px">Gerado em: <strong style="color:#161614">${today.toLocaleDateString('pt-BR')}</strong></div>
+        </div>
+      </div>
+
+      <div style="background:#e6ecf2;border-radius:12px;padding:14px 18px;margin-bottom:22px;display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <span style="font-size:10px;text-transform:uppercase;color:#555;font-weight:700;letter-spacing:1px">CLIENTE PARCEIRO</span>
+          <div style="font-size:16px;font-weight:700;margin-top:2px">${esc(c.name)} — ${esc(c.service || 'Gestão de Conteúdo')}</div>
+        </div>
+        <div style="text-align:right">
+          <span style="font-size:10px;text-transform:uppercase;color:#555;font-weight:700;letter-spacing:1px">TOTAL DE ENTREGAS</span>
+          <div style="font-size:18px;font-weight:700;margin-top:2px">${clientDemands.length} postagens/demandas</div>
+        </div>
+      </div>
+
+      <table class="inv-table">
+        <thead>
+          <tr>
+            <th>Data & Hora</th>
+            <th>Conteúdo / Formato / Pauta</th>
+            <th style="text-align:right">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="inv-footer">
+      <span><strong>BOW STUDIO</strong> — Planejamento & Gestão Criativa</span>
+      <span>Cronograma sujeito a ajustes e aprovação</span>
+    </div>
+  `;
+
+  document.getElementById('schedulePdfBackdrop').classList.add('open');
+}
+
+function closeSchedulePdfModal(){
+  document.getElementById('schedulePdfBackdrop').classList.remove('open');
+}
+
+async function downloadClientScheduleA4Pdf(){
+  const btn = document.getElementById('btnDownloadSchedulePdf');
+  const orig = btn.innerHTML;
+  btn.innerHTML = 'Gerando PDF A4...';
+  btn.disabled = true;
+
+  const c = (db.clients || []).find(x => Number(x.id) === Number(activeHubClientId));
+  const cName = c ? c.name.replace(/[^a-zA-Z0-9_-]/g,'_') : 'Cliente';
+  const sourceSheet = document.getElementById('a4ScheduleSheet');
+
+  const printStage = document.createElement('div');
+  printStage.style.cssText = 'position:fixed;left:0;top:0;width:794px;background:#ffffff;z-index:-9999;padding:0;margin:0;';
+  const clonedSheet = sourceSheet.cloneNode(true);
+  clonedSheet.style.cssText = 'width:794px;min-height:1090px;margin:0;padding:42px 48px;box-shadow:none;background:#ffffff;box-sizing:border-box;display:flex;flex-direction:column;justify-content:space-between;';
+  printStage.appendChild(clonedSheet);
+  document.body.appendChild(printStage);
+
+  try {
+    await new Promise(r => setTimeout(r, 150));
+    await html2pdf().set({
+      margin: 0,
+      filename: `Cronograma_BOW_${cName}.pdf`,
+      image: { type: 'jpeg', quality: 0.99 },
+      html2canvas: { scale: 2, useCORS: true, width: 794, windowWidth: 794, x: 0, y: 0, scrollX: 0, scrollY: 0 },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    }).from(clonedSheet).save();
+    showToast('Cronograma baixado em PDF (A4)!');
+  } catch(e){
+    window.print();
+  } finally {
+    if(printStage.parentNode) printStage.parentNode.removeChild(printStage);
+    btn.innerHTML = orig;
+    btn.disabled = false;
+  }
+}
+
+// Dispara a atualização imediata para sincronizar Mobile e Desktop
+pullFromCloud();
 </script>
 </body>
 </html>
